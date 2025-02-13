@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>波い爱心大转盘</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 40px;
+            margin-top: 20px;
+        }
+        .wheel-container {
+            position: relative;
+            width: 400px;
+            height: 400px;
+        }
+        canvas {
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .pointer {
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 20px solid transparent;
+            border-right: 20px solid transparent;
+            border-top: 40px solid #ff4444;
+            z-index: 1;
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            min-width: 500px;
+        }
+        .prize-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        .prize-table th, .prize-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .prize-table th {
+            background-color: #f5f5f5;
+        }
+        .prize-table input {
+            width: 90%;
+            padding: 4px;
+        }
+        input, button {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .action-btn {
+            padding: 4px 8px;
+            margin: 0 2px;
+        }
+        .delete-btn {
+            background-color: #ff4444;
+        }
+        .delete-btn:hover {
+            background-color: #cc0000;
+        }
+    </style>
+</head>
+<body>
+    <h1>波い爱心大转盘</h1>
+    <div class="container">
+        <div class="wheel-container">
+            <div class="pointer"></div>
+            <canvas id="wheel" width="400" height="400"></canvas>
+        </div>
+        <div class="controls">
+            <div>
+                <h3>奖品管理</h3>
+                <button onclick="addNewPrize()">添加新奖品</button>
+                <table class="prize-table">
+                    <thead>
+                        <tr>
+                            <th>奖品名称</th>
+                            <th>权重</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="prizeTableBody">
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h3>抽奖设置</h3>
+                <div>
+                    <label>力度(1-10):</label>
+                    <input type="number" id="power" value="5" min="1" max="10">
+                </div>
+                <div>
+                    <label>最大抽奖次数:</label>
+                    <input type="number" id="maxTimes" value="1" min="1">
+                </div>
+                <button id="startBtn" onclick="startLottery()">开始抽奖</button>
+                <button onclick="resetLottery()">重置抽奖</button>
+            </div>
+            <div id="result" class="result"></div>
+        </div>
+    </div>
+
+    <script>
+        // 使用localStorage存储奖品数据
+        let prizes = JSON.parse(localStorage.getItem('prizes')) || [
+            { id: 1, name: '一等奖', weight: 10, available: true },
+            { id: 2, name: '二等奖', weight: 20, available: true },
+            { id: 3, name: '三等奖', weight: 30, available: true }
+        ];
+        let isSpinning = false;
+        let remainingTimes = 0;
+        let nextId = Math.max(...prizes.map(p => p.id), 0) + 1;
+        
+        const canvas = document.getElementById('wheel');
+        const ctx = canvas.getContext('2d');
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const radius = Math.min(centerX, centerY) - 10;
+
+        // 保存数据到localStorage
+        function savePrizes() {
+            localStorage.setItem('prizes', JSON.stringify(prizes));
+            updatePrizeTable();
+            drawWheel();
+            updateMaxTimes();
+        }
+
+        function addNewPrize() {
+            prizes.push({
+                id: nextId++,
+                name: '新奖品',
+                weight: 10,
+                available: true
+            });
+            savePrizes();
+        }
+
+        function updatePrize(id, field, value) {
+            const prize = prizes.find(p => p.id === id);
+            if (prize) {
+                if (field === 'weight') {
+                    value = parseInt(value) || 1;
+                    if (value < 1) value = 1;
+                }
+                prize[field] = value;
+                savePrizes();
+            }
+        }
+
+        function deletePrize(id) {
+            prizes = prizes.filter(p => p.id !== id);
+            savePrizes();
+        }
+
+        function updatePrizeTable() {
+            const tbody = document.getElementById('prizeTableBody');
+            tbody.innerHTML = '';
+            
+            prizes.forEach(prize => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>
+                        <input type="text" value="${prize.name}"
+                            onchange="updatePrize(${prize.id}, 'name', this.value)"
+                            ${!prize.available ? 'disabled' : ''}>
+                    </td>
+                    <td>
+                        <input type="number" value="${prize.weight}" min="1"
+                            onchange="updatePrize(${prize.id}, 'weight', this.value)"
+                            ${!prize.available ? 'disabled' : ''}>
+                    </td>
+                    <td>${prize.available ? '可用' : '已抽取'}</td>
+                    <td>
+                        ${prize.available ? 
+                            `<button class="action-btn delete-btn" onclick="deletePrize(${prize.id})">删除</button>` : 
+                            ''}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updateMaxTimes() {
+            const maxTimesInput = document.getElementById('maxTimes');
+            const availablePrizes = prizes.filter(p => p.available).length;
+            maxTimesInput.max = availablePrizes;
+            if (parseInt(maxTimesInput.value) > availablePrizes) {
+                maxTimesInput.value = availablePrizes;
+            }
+        }
+
+        function drawWheel() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const availablePrizes = prizes.filter(p => p.available);
+            if (availablePrizes.length === 0) return;
+
+            const totalWeight = availablePrizes.reduce((sum, prize) => sum + prize.weight, 0);
+            let startAngle = 0;
+
+            availablePrizes.forEach((prize, index) => {
+                const angle = (prize.weight / totalWeight) * Math.PI * 2;
+                
+                // 绘制扇形
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.arc(centerX, centerY, radius, startAngle, startAngle + angle);
+                ctx.closePath();
+                
+                // 交替使用不同颜色
+                ctx.fillStyle = index % 2 ? '#FFD700' : '#FFA500';
+                ctx.fill();
+                ctx.stroke();
+
+                // 绘制文字
+                ctx.save();
+                ctx.translate(centerX, centerY);
+                ctx.rotate(startAngle + angle / 2);
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#000';
+                ctx.font = '16px Arial';
+                ctx.fillText(prize.name, radius - 20, 0);
+                ctx.restore();
+
+                startAngle += angle;
+            });
+        }
+
+        function resetLottery() {
+            prizes.forEach(prize => prize.available = true);
+            document.getElementById('result').innerHTML = '';
+            savePrizes();
+        }
+
+        function startLottery() {
+            if (isSpinning) return;
+            
+            const availablePrizes = prizes.filter(p => p.available);
+            if (availablePrizes.length === 0) {
+                alert('没有可用的奖品了！');
+                return;
+            }
+
+            const power = parseInt(document.getElementById('power').value);
+            if (power < 1 || power > 10) {
+                alert('请输入1-10之间的力度值！');
+                return;
+            }
+
+            const maxTimes = parseInt(document.getElementById('maxTimes').value);
+            if (maxTimes < 1 || maxTimes > availablePrizes.length) {
+                alert('请输入有效的抽奖次数！');
+                return;
+            }
+
+            remainingTimes = maxTimes;
+            document.getElementById('startBtn').disabled = true;
+            spinWheel(power);
+        }
+
+        function spinWheel(power) {
+            isSpinning = true;
+            const availablePrizes = prizes.filter(p => p.available);
+            const totalWeight = availablePrizes.reduce((sum, prize) => sum + prize.weight, 0);
+            
+            // 使用物理模拟的转动效果
+            const initialVelocity = power * 10 + Math.random() * 5; // 初始角速度
+            const friction = 0.98; // 摩擦系数（速度衰减因子）
+            const minVelocity = 0.01; // 最小速度阈值
+            
+            let currentVelocity = initialVelocity;
+            let currentRotation = 0;
+            let lastTimestamp = null;
+            
+            function rotate(timestamp) {
+                if (!lastTimestamp) lastTimestamp = timestamp;
+                const deltaTime = (timestamp - lastTimestamp) / 1000; // 转换为秒
+                lastTimestamp = timestamp;
+                
+                if (currentVelocity > minVelocity) {
+                    // 应用摩擦力
+                    currentVelocity *= Math.pow(friction, deltaTime * 60); // 基于60fps归一化
+                    currentRotation += currentVelocity * deltaTime;
+                    
+                    // 旋转画布绘制
+                    ctx.save();
+                    ctx.translate(centerX, centerY);
+                    ctx.rotate(currentRotation);
+                    ctx.translate(-centerX, -centerY);
+                    drawWheel();
+                    ctx.restore();
+                    
+                    requestAnimationFrame(rotate);
+                } else {
+                    isSpinning = false;
+                    
+                    // 确定中奖奖品
+                    const finalAngle = currentRotation % (Math.PI * 2);
+                    let angleSum = 0;
+                    let winningPrize;
+                    
+                    for (const prize of availablePrizes) {
+                        const angle = (prize.weight / totalWeight) * Math.PI * 2;
+                        if (finalAngle >= angleSum && finalAngle < angleSum + angle) {
+                            winningPrize = prize;
+                            break;
+                        }
+                        angleSum += angle;
+                    }
+                    
+                    // 更新奖品状态和显示结果
+                    winningPrize.available = false;
+                    remainingTimes--;
+                    
+                    document.getElementById('result').innerHTML += 
+                        `<div>恭喜抽中: ${winningPrize.name}</div>`;
+                    
+                    savePrizes();
+                    
+                    // 检查是否继续抽奖
+                    if (remainingTimes > 0) {
+                        setTimeout(() => {
+                            spinWheel(power);
+                        }, 1000);
+                    } else {
+                        document.getElementById('startBtn').disabled = false;
+                    }
+                }
+            }
+            
+            requestAnimationFrame(rotate);
+        }
+
+        // 初始化
+        updatePrizeTable();
+        drawWheel();
+        updateMaxTimes();
+    </script>
+</body>
+</html>
